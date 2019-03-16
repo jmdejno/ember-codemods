@@ -1,0 +1,9 @@
+
+# npm
+node_modules
+
+# app specific
+build
+
+# vscode
+.vscode
