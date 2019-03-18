@@ -1,5 +1,12 @@
 import { Collection } from "jscodeshift/src/Collection";
-import { JSCodeshift, ObjectProperty, Identifier } from "jscodeshift";
+import {
+  JSCodeshift,
+  ObjectProperty,
+  Identifier,
+  ObjectMethod,
+  Program,
+  File
+} from "jscodeshift";
 import {
   emberComponentProps,
   emberLifecycleHooks,
@@ -9,11 +16,18 @@ import { NodePath } from "recast";
 import {
   isPrivateProperty,
   isPropertyOf,
-  isNamedObjectPropertyOf
+  isNamedObjectPropertyOf,
+  isSingleLineProperty,
+  findObjectPropsBy,
+  isMultilineProperty,
+  getNodes,
+  insertLineBeforeObjectProps
 } from "./helpers";
 
 export class Component {
-  public static build(j: JSCodeshift, root: Collection<any>): Component {
+  //#region public statics
+
+  public static build(j: JSCodeshift, root: Collection<File>): Component {
     Component.jscodeshift = j;
     return new Component(root);
   }
@@ -23,7 +37,6 @@ export class Component {
     path: NodePath<ObjectProperty>
   ) {
     const { node } = path;
-    debugger;
     const key = node && j.Identifier.check(node.key) && node.key;
     return !!(
       Component.isComponentObjectProperty(j, path) &&
@@ -37,7 +50,7 @@ export class Component {
 
   public static isEmberLifecycleHook(
     j: JSCodeshift,
-    path: NodePath<ObjectProperty>
+    path: NodePath<ObjectProperty | ObjectMethod>
   ): boolean {
     const { node } = path;
     const key = node && j.Identifier.check(node.key) && node.key;
@@ -53,10 +66,14 @@ export class Component {
 
   public static isComponentObjectProperty(
     j: JSCodeshift,
-    path: NodePath<ObjectProperty>
+    path: NodePath<ObjectProperty | ObjectMethod>
   ): boolean {
     return isPropertyOf(j, path, emberObjectTypes.COMPONENT);
   }
+
+  // #endregion
+
+  //#region private statics
 
   private static _getComponent(root: Collection<any>): Collection<any> {
     const j = Component.jscodeshift;
@@ -76,11 +93,17 @@ export class Component {
 
   private static _findEmberLifecycleHooks(
     component: Collection<any>
-  ): Collection<ObjectProperty> {
+  ): { props: Collection<ObjectProperty>; methods: Collection<ObjectMethod> } {
     const j = this.jscodeshift;
-    return component
+    const props = component
       .find(j.ObjectProperty)
       .filter(path => this.isEmberLifecycleHook(j, path));
+
+    const methods = component
+      .find(j.ObjectMethod)
+      .filter(path => this.isEmberLifecycleHook(j, path));
+
+    return { props, methods };
   }
 
   private static _findEmberProps(
@@ -105,35 +128,62 @@ export class Component {
 
   private static _findNonEmberProps(
     component: Collection<any>,
-    foundProps: WeakSet<ObjectProperty>
+    foundProps: WeakSet<ObjectProperty | ObjectMethod>
   ): {
     publicProps: Collection<ObjectProperty>;
     privateProps: Collection<ObjectProperty>;
+    privateMethods: Collection<ObjectMethod>;
+    publicMethods: Collection<ObjectMethod>;
   } {
     const j = Component.jscodeshift;
     const nonEmberProps = component
       .find(j.ObjectProperty)
       .filter(p => !foundProps.has(p.node));
-    const publicProps = nonEmberProps.filter(p => !isPrivateProperty(j, p));
-    const privateProps = nonEmberProps.filter(p => isPrivateProperty(j, p));
-    return { publicProps, privateProps };
+
+    const publicProps = nonEmberProps.filter(
+      p => !isPrivateProperty(j, p) && this.isComponentObjectProperty(j, p)
+    );
+    const privateProps = nonEmberProps.filter(
+      p => isPrivateProperty(j, p) && this.isComponentObjectProperty(j, p)
+    );
+
+    const nonEmberMethods = component
+      .find(j.ObjectMethod)
+      .filter(p => !foundProps.has(p.node));
+    const privateMethods = nonEmberMethods.filter(p =>
+      this.isComponentObjectProperty(j, p)
+    );
+    const publicMethods = nonEmberMethods.filter(p =>
+      this.isComponentObjectProperty(j, p)
+    );
+    return { publicProps, privateProps, privateMethods, publicMethods };
   }
 
   private static jscodeshift: JSCodeshift;
 
+  // #endregion
+
+  //#region private members
+  private _root: Collection<File>;
   private _component: Collection<any>;
   private _services: Collection<ObjectProperty>;
   private _emberProps: Collection<ObjectProperty>;
   private _publicProps: Collection<ObjectProperty>;
   private _privateProps: Collection<ObjectProperty>;
   private _actions: Collection<ObjectProperty>;
-  // private _singleLineComputedProps: Collection<any>;
-  // private _mutliLineComputeProps: Collection<any>;
-  private _lifecycleHooks: Collection<ObjectProperty>;
-  // private _privateMethods: Collection<any>;
-  private _foundObjectProps: WeakSet<ObjectProperty> = new WeakSet();
+  private _singleLineComputedProps: Collection<ObjectProperty>;
+  private _mutliLineComputeProps: Collection<ObjectProperty>;
+  private _lifecycleHooksProps: Collection<ObjectProperty>;
+  private _lifecycleHooksMethods: Collection<ObjectMethod>;
+  private _privateMethods: Collection<ObjectMethod>;
+  private _foundObjectProps: WeakSet<
+    ObjectProperty | ObjectMethod
+  > = new WeakSet();
 
-  private constructor(root: Collection<any>) {
+  // #endregion
+
+  private constructor(root: Collection<File>) {
+    this._root = root;
     this._component = Component._getComponent(root);
     this._findObjectProps(this._component);
   }
@@ -141,37 +191,69 @@ export class Component {
   public rebuild() {
     const j = Component.jscodeshift;
     const originalObj = this._component.get("declaration", "arguments", 0);
-    const obj = j.objectExpression([
-      ...this._services.nodes(),
-      ...this._emberProps.nodes(),
-      ...this._publicProps.nodes(),
-      ...this._lifecycleHooks.nodes(),
-      ...this._actions.nodes(),
-      ...this._privateProps.nodes()
-    ]);
+    const props = [
+      this._services,
+      this._emberProps,
+      this._publicProps,
+      this._privateProps,
+      this._singleLineComputedProps,
+      this._mutliLineComputeProps,
+      this._lifecycleHooksProps,
+      this._lifecycleHooksMethods,
+      this._actions,
+      this._privateMethods
+    ];
+    const obj = j.objectExpression(getNodes(...props));
     originalObj.replace(obj);
+
+    insertLineBeforeObjectProps(j, ...props);
+
   }
 
   private _findObjectProps(component: Collection<any>) {
+    const j = Component.jscodeshift;
+
     this._services = Component._findServices(component);
     this._emberProps = Component._findEmberProps(component);
-    this._lifecycleHooks = Component._findEmberLifecycleHooks(component);
+    const { props, methods } = Component._findEmberLifecycleHooks(component);
+    this._lifecycleHooksProps = props;
+    this._lifecycleHooksMethods = methods;
     this._actions = Component._findComponentActions(component);
+    this._singleLineComputedProps = findObjectPropsBy(
+      j,
+      component,
+      isSingleLineProperty,
+      emberObjectTypes.COMPONENT
+    );
+    this._mutliLineComputeProps = findObjectPropsBy(
+      j,
+      component,
+      isMultilineProperty,
+      emberObjectTypes.COMPONENT
+    );
     this._addToFoundObjectProps(
       this._services,
-      this._lifecycleHooks,
+      this._lifecycleHooksProps,
+      this._lifecycleHooksMethods,
       this._emberProps,
-      this._actions
+      this._actions,
+      this._singleLineComputedProps,
+      this._mutliLineComputeProps
     );
-    const { publicProps, privateProps } = Component._findNonEmberProps(
-      component,
-      this._foundObjectProps
-    );
+    const {
+      publicProps,
+      privateProps,
+      publicMethods,
+      privateMethods
+    } = Component._findNonEmberProps(component, this._foundObjectProps);
     this._publicProps = publicProps;
     this._privateProps = privateProps;
+    this._privateMethods = privateMethods;
   }
 
-  private _addToFoundObjectProps(...props: Collection<ObjectProperty>[]) {
+  private _addToFoundObjectProps(
+    ...props: (Collection<ObjectProperty | ObjectMethod>)[]
+  ) {
     props.forEach(path =>
       path.nodes().forEach(node => this._foundObjectProps.add(node))
     );

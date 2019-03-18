@@ -26,3 +26,41 @@ export enum emberObjectTypes {
   COMPONENT = "Component",
   SERVIICE = "Service"
 }
+
+export enum emberMultiLineObjectMethods {
+  COMPUTED = "computed",
+  FILTER = "filter",
+  FILTER_BY = "filterBy",
+  MAP = "map",
+  MAP_BY = "mapBy",
+}
+
+export enum emberSingleLineObjectMethods {
+  OR = "or",
+  AND = "and",
+  NOT = "not",
+  ALIAS  = "alias",
+  BOOL = "bool",
+  COLLECT = "collect",
+  EMPTY = "empty",
+  EQUAL = "equal",
+  GT = "gt",
+  GTE = "gte",
+  LT = "lt",
+  LTE = "lte",
+  INTERSECT = "intersect",
+  MATCH = "max",
+  MAX = "max",
+  MIN  = "min",
+  NONE = "none",
+  NOT_EMPTY = "notEmpty",
+  ONE_WAY = "oneWay",
+  READ_ONLY = "readOnly",
+  READS = "reads",
+  SORT = "sort",
+  SUM = "sum",
+  UNION = "union",
+  UNION_BY = "unionBy",
+  UNIQ = "uniq",
+  UNIQ_BY = "uniqBy"
+}
