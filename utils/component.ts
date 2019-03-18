@@ -1,8 +1,16 @@
 import { Collection } from "jscodeshift/src/Collection";
-import { JSCodeshift, Property, ObjectExpression } from "jscodeshift";
-import { emberComponentProps, lifecycleHooks } from "./constants";
+import { JSCodeshift, ObjectProperty, Identifier } from "jscodeshift";
+import {
+  emberComponentProps,
+  emberLifecycleHooks,
+  emberObjectTypes
+} from "./constants";
 import { NodePath } from "recast";
-import { isPrivateProperty } from "./helpers";
+import {
+  isPrivateProperty,
+  isPropertyOf,
+  isNamedObjectPropertyOf
+} from "./helpers";
 
 export class Component {
   public static build(j: JSCodeshift, root: Collection<any>): Component {
@@ -10,10 +18,15 @@ export class Component {
     return new Component(root);
   }
 
-  public static isEmberCompoentProp(j: JSCodeshift, path: NodePath<Property>) {
+  public static isEmberComponentProp(
+    j: JSCodeshift,
+    path: NodePath<ObjectProperty>
+  ) {
     const { node } = path;
-    const key = j.Identifier.check(node.key) && node.key;
+    debugger;
+    const key = node && j.Identifier.check(node.key) && node.key;
     return !!(
+      Component.isComponentObjectProperty(j, path) &&
       key &&
       key.name &&
       Object.values(emberComponentProps).some(
@@ -24,84 +37,143 @@ export class Component {
 
   public static isEmberLifecycleHook(
     j: JSCodeshift,
-    path: NodePath<Property>
+    path: NodePath<ObjectProperty>
   ): boolean {
     const { node } = path;
-    const key = j.Identifier.check(node.key) && node.key;
+    const key = node && j.Identifier.check(node.key) && node.key;
     return !!(
+      Component.isComponentObjectProperty(j, path) &&
       key &&
       key.name &&
-      Object.values(lifecycleHooks).some(emberProp => emberProp === key.name)
+      Object.values(emberLifecycleHooks).some(
+        emberProp => emberProp === key.name
+      )
     );
+  }
+
+  public static isComponentObjectProperty(
+    j: JSCodeshift,
+    path: NodePath<ObjectProperty>
+  ): boolean {
+    return isPropertyOf(j, path, emberObjectTypes.COMPONENT);
   }
 
   private static _getComponent(root: Collection<any>): Collection<any> {
     const j = Component.jscodeshift;
-    const component = root.find(j.ExportDefaultDeclaration, {
-      declaration: { callee: { object: { name: "Component" } } }
+    return root.find(j.ExportDefaultDeclaration, {
+      declaration: { callee: { object: { name: emberObjectTypes.COMPONENT } } }
     });
-    return component;
   }
 
   private static _findServices(component: Collection<any>): Collection<any> {
     const j = Component.jscodeshift;
-    return component.find(j.Property, {
-      value: { callee: { name: "service" } }
-    });
+    return component
+      .find(j.ObjectProperty, {
+        value: { callee: { name: "service" } }
+      })
+      .filter(path => Component.isComponentObjectProperty(j, path));
   }
 
-  private static _findProps(
+  private static _findEmberLifecycleHooks(
     component: Collection<any>
+  ): Collection<ObjectProperty> {
+    const j = this.jscodeshift;
+    return component
+      .find(j.ObjectProperty)
+      .filter(path => this.isEmberLifecycleHook(j, path));
+  }
+
+  private static _findEmberProps(
+    component: Collection<any>
+  ): Collection<ObjectProperty> {
+    const j = this.jscodeshift;
+    return component
+      .find(j.ObjectProperty)
+      .filter(path => this.isEmberComponentProp(j, path));
+  }
+
+  private static _findComponentActions(
+    component: Collection<any>
+  ): Collection<ObjectProperty> {
+    const j = this.jscodeshift;
+    return component
+      .find(j.ObjectProperty)
+      .filter(p =>
+        isNamedObjectPropertyOf(j, p, "actions", emberObjectTypes.COMPONENT)
+      );
+  }
+
+  private static _findNonEmberProps(
+    component: Collection<any>,
+    foundProps: WeakSet<ObjectProperty>
   ): {
-    emberProps: Collection<any>;
-    publicProps: Collection<any>;
-    privateProps: Collection<any>;
-    hooks: Collection<any>;
+    publicProps: Collection<ObjectProperty>;
+    privateProps: Collection<ObjectProperty>;
   } {
     const j = Component.jscodeshift;
-    const emberProps = component.find(j.Property, p =>
-      Component.isEmberCompoentProp(j, p)
-    );
-    const hooks = component.find(j.Property, p =>
-      Component.isEmberLifecycleHook(j, p)
-    );
-    const nonEmberProps = component.find(
-      j.Property,
-      p =>
-        !Component.isEmberCompoentProp(j, p) &&
-        !Component.isEmberLifecycleHook(j, p)
-    );
+    const nonEmberProps = component
+      .find(j.ObjectProperty)
+      .filter(p => !foundProps.has(p.node));
     const publicProps = nonEmberProps.filter(p => !isPrivateProperty(j, p));
     const privateProps = nonEmberProps.filter(p => isPrivateProperty(j, p));
-    return { emberProps, publicProps, privateProps, hooks };
+    return { publicProps, privateProps };
   }
 
   private static jscodeshift: JSCodeshift;
 
   private _component: Collection<any>;
-  private _services: Collection<any>;
-  private _emberProps: Collection<any>;
-  private _publicProps: Collection<any>;
-  private _privateProps: Collection<any>;
+  private _services: Collection<ObjectProperty>;
+  private _emberProps: Collection<ObjectProperty>;
+  private _publicProps: Collection<ObjectProperty>;
+  private _privateProps: Collection<ObjectProperty>;
+  private _actions: Collection<ObjectProperty>;
   // private _singleLineComputedProps: Collection<any>;
   // private _mutliLineComputeProps: Collection<any>;
-  private _lifecycleHooks: Collection<any>;
-  // private _actions: Collection<any>;
+  private _lifecycleHooks: Collection<ObjectProperty>;
   // private _privateMethods: Collection<any>;
+  private _foundObjectProps: WeakSet<ObjectProperty> = new WeakSet();
 
   private constructor(root: Collection<any>) {
     this._component = Component._getComponent(root);
-    this._services = Component._findServices(this._component);
-    const {
-      emberProps,
-      publicProps,
-      privateProps,
-      hooks
-    } = Component._findProps(this._component);
-    this._emberProps = emberProps;
+    this._findObjectProps(this._component);
+  }
+
+  public rebuild() {
+    const j = Component.jscodeshift;
+    const originalObj = this._component.get("declaration", "arguments", 0);
+    const obj = j.objectExpression([
+      ...this._services.nodes(),
+      ...this._emberProps.nodes(),
+      ...this._publicProps.nodes(),
+      ...this._lifecycleHooks.nodes(),
+      ...this._actions.nodes(),
+      ...this._privateProps.nodes()
+    ]);
+    originalObj.replace(obj);
+  }
+
+  private _findObjectProps(component: Collection<any>) {
+    this._services = Component._findServices(component);
+    this._emberProps = Component._findEmberProps(component);
+    this._lifecycleHooks = Component._findEmberLifecycleHooks(component);
+    this._actions = Component._findComponentActions(component);
+    this._addToFoundObjectProps(
+      this._services,
+      this._lifecycleHooks,
+      this._emberProps,
+      this._actions
+    );
+    const { publicProps, privateProps } = Component._findNonEmberProps(
+      component,
+      this._foundObjectProps
+    );
     this._publicProps = publicProps;
     this._privateProps = privateProps;
-    this._lifecycleHooks = hooks;
-    console.log(this);
+  }
+
+  private _addToFoundObjectProps(...props: Collection<ObjectProperty>[]) {
+    props.forEach(path =>
+      path.nodes().forEach(node => this._foundObjectProps.add(node))
+    );
   }
 }

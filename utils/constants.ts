@@ -1,4 +1,4 @@
-export enum lifecycleHooks {
+export enum emberLifecycleHooks {
   INIT = 'init',
   SETUP_CONTROLLER = 'setupController',
   DID_RECIECE_ATTRS = 'didReceiveAttrs',
@@ -20,4 +20,9 @@ export enum emberComponentProps {
   TAG_NAME = "tagName",
   ATTR_BINDINGS = "attributeBindings",
   LAYOUT = 'layout'
+}
+
+export enum emberObjectTypes {
+  COMPONENT = "Component",
+  SERVIICE = "Service"
 }

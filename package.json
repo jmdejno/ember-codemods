@@ -2,22 +2,31 @@
   "name": "learning-web-codemods",
   "version": "0.1.0",
   "scripts": {
-    "start": "npm run build && ./build/bin/cli.js",
+    "start": "yarn build && ts-node --project ./tsconfig.json ./bin/cli.ts",
     "test": "codemod-cli test",
     "update-docs": "codemod-cli update-docs",
     "build": "tsc --pretty",
-    "watch": "tsc -w --pretty"
+    "watch": "tsc -w --pretty",
+    "dryrun": "node_modules/.bin/jscodeshift -d -p -t"
   },
-  "bin": "./build/bin/cli.js",
+  "bin": {
+    "lil-mod": "./bin/cli.js"
+  },
   "keywords": [
     "codemod-cli"
   ],
   "dependencies": {
+    "@types/chalk": "^2.2.0",
     "@types/commander": "^2.12.2",
+    "chalk": "^2.4.2",
     "codemod-cli": "^0.2.10",
-    "commander": "^2.19.0"
+    "commander": "^2.19.0",
+    "inquirer": "^6.2.2",
+    "inquirer-path": "^1.0.0-beta5",
+    "jscodeshift": "^0.6.3"
   },
   "devDependencies": {
+    "@types/inquirer": "^0.0.44",
     "@types/jscodeshift": "^0.6.0",
     "@types/node": "^11.11.3",
     "jest": "^24.1.0",

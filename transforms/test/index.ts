@@ -8,6 +8,7 @@ module.exports = function transformer(file: any, api: any) {
   const options = getOptions();
 
   const root = j(file.source);
-  Component.build(j, root);
+  const component = Component.build(j, root);
+  component.rebuild();
   return root.toSource();
 };

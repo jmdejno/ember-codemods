@@ -2,8 +2,10 @@
 # npm
 node_modules
 
-# app specific
-build
-
 # vscode
 .vscode
+
+# App specific
+*.js
+*.js.map
+
